@@ -1,7 +1,15 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { generateDisputePDF } from "./lib/pdf";
+import { computeDeadline } from "./lib/countdown";
+import {
+  loadHistory,
+  saveHistory,
+  deleteEntry,
+  newId,
+  type HistoryEntry,
+} from "./lib/history";
 import {
   Upload,
   X,
@@ -13,6 +21,10 @@ import {
   Loader2,
   Download,
   ArrowRight,
+  Clock,
+  AlertCircle,
+  History,
+  Trash2,
 } from "lucide-react";
 
 type BoundingBox = {
@@ -48,6 +60,14 @@ type DisputeResponse = {
   requested_amount_low_usd: number;
   requested_amount_high_usd: number;
   next_steps: string[];
+};
+
+type CoverageResponse = {
+  coverage_score: number;
+  covered_angles: string[];
+  missing_angles: string[];
+  recommendations: string[];
+  summary: string;
 };
 
 type UploadedPhoto = {
@@ -283,6 +303,7 @@ export default function HomePage() {
           returnPhotoCount: returnPhotos.length,
           findings: analysis.findings,
           operatorNotes: operatorNotes || undefined,
+          mode: disputeMode,
         }),
       });
       if (!res.ok) {
@@ -292,6 +313,30 @@ export default function HomePage() {
       const data = (await res.json()) as DisputeResponse;
       setDispute(data);
       setStage("done");
+      // Persist this case to local history
+      if (analysis) {
+        const id = currentEntryId || newId();
+        setCurrentEntryId(id);
+        saveHistory({
+          id,
+          savedAt: new Date().toISOString(),
+          vehicleLabel: vehicleLabel || "Vehicle",
+          renterName: renterName || "Renter",
+          tripStartDate: tripStartDate || "",
+          tripEndDate: tripEndDate || "",
+          mode: disputeMode,
+          totalLow:
+            data.requested_amount_low_usd ?? analysis.total_estimate_low_usd ?? 0,
+          totalHigh:
+            data.requested_amount_high_usd ??
+            analysis.total_estimate_high_usd ??
+            0,
+          findingsCount: analysis.findings.length,
+          summary: analysis.summary || data.subject,
+          disputeSubject: data.subject,
+        });
+        refreshHistory();
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
@@ -308,6 +353,68 @@ export default function HomePage() {
 
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [isSampleCase, setIsSampleCase] = useState(false);
+  const [disputeMode, setDisputeMode] = useState<"guest_direct" | "turo_claim">(
+    "guest_direct"
+  );
+  const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
+  const [checkingCoverage, setCheckingCoverage] = useState(false);
+
+  // Dispute history (localStorage)
+  const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [currentEntryId, setCurrentEntryId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
+
+  function refreshHistory() {
+    setHistory(loadHistory());
+  }
+
+  function removeHistoryEntry(id: string) {
+    deleteEntry(id);
+    refreshHistory();
+  }
+
+  async function checkCoverage() {
+    if (pickupPhotos.length === 0) return;
+    setCheckingCoverage(true);
+    setCoverage(null);
+    try {
+      const res = await fetch("/api/coverage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pickupPhotos: pickupPhotos.map((p) => ({
+            mediaType: p.mediaType,
+            base64: p.base64,
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || `HTTP ${res.status}`);
+      }
+      const data = (await res.json()) as CoverageResponse;
+      setCoverage(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCheckingCoverage(false);
+    }
+  }
+
+  // Live countdown for Turo's 24-hour reporting window
+  const [now, setNow] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 60_000); // tick every minute
+    return () => clearInterval(t);
+  }, []);
+  const deadline = useMemo(
+    () => computeDeadline(tripEndDate, now),
+    [tripEndDate, now]
+  );
 
   async function downloadPdf() {
     if (!dispute || !analysis) return;
@@ -465,14 +572,29 @@ export default function HomePage() {
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={loadSampleCase}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full border border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 transition shadow-sm"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Try with a sample case
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setHistoryOpen((v) => !v)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition shadow-sm"
+              >
+                <History className="w-3.5 h-3.5" />
+                History
+                {history.length > 0 && (
+                  <span className="ml-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] text-[10px] font-bold bg-slate-900 text-white rounded-full px-1">
+                    {history.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={loadSampleCase}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3.5 py-2 rounded-full border border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50 hover:border-indigo-400 transition shadow-sm"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                Try with a sample case
+              </button>
+            </div>
           </div>
           <p className="text-slate-600 max-w-2xl leading-relaxed">
             Drop in your pickup and return photos. Claude vision flags new damage with
@@ -489,8 +611,89 @@ export default function HomePage() {
             <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">
               PDF export ready to file
             </span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-rose-100 text-rose-700">
+              24h Turo deadline timer
+            </span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">
+              Guest-direct + Turo escalation
+            </span>
           </div>
         </div>
+
+        {/* Dispute history panel — toggled from header */}
+        {historyOpen && (
+          <section className="bg-white rounded-2xl border border-slate-200/70 p-6 mb-6 shadow-sm shadow-slate-200/50">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <History className="w-5 h-5 text-slate-700" />
+                <h2 className="text-lg font-semibold text-slate-900">
+                  Past disputes
+                </h2>
+                <span className="text-xs text-slate-500">
+                  ({history.length} saved on this device)
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(false)}
+                className="text-xs text-slate-500 hover:text-slate-800"
+              >
+                Close
+              </button>
+            </div>
+            {history.length === 0 ? (
+              <p className="text-sm text-slate-500 py-2">
+                No past disputes yet. They&apos;ll appear here automatically
+                after you generate one. Stored only in your browser.
+              </p>
+            ) : (
+              <ul className="divide-y divide-slate-100">
+                {history.map((h) => (
+                  <li
+                    key={h.id}
+                    className="py-3 flex items-start justify-between gap-3"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <span className="text-sm font-semibold text-slate-900 truncate">
+                          {h.vehicleLabel}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            h.mode === "guest_direct"
+                              ? "bg-indigo-100 text-indigo-700"
+                              : "bg-rose-100 text-rose-700"
+                          }`}
+                        >
+                          {h.mode === "guest_direct"
+                            ? "GUEST DIRECT"
+                            : "TURO CLAIM"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 truncate">
+                        {h.renterName} • {h.tripStartDate} → {h.tripEndDate} •{" "}
+                        {h.findingsCount}{" "}
+                        {h.findingsCount === 1 ? "finding" : "findings"} • $
+                        {h.totalLow}-{h.totalHigh}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Saved {new Date(h.savedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeHistoryEntry(h.id)}
+                      className="text-slate-400 hover:text-rose-600 flex-shrink-0 p-1"
+                      aria-label="Delete entry"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
 
         <section className="bg-white rounded-2xl border border-slate-200/70 p-6 mb-6 shadow-sm shadow-slate-200/50">
           <div className="flex items-center gap-2 mb-4">
@@ -517,6 +720,140 @@ export default function HomePage() {
               accentColor="purple"
             />
           </div>
+
+          {/* Coverage check — bad pickup coverage is the #1 reason Turo denies claims */}
+          {pickupPhotos.length > 0 && (
+            <div className="mt-5 pt-5 border-t border-slate-200">
+              <div className="flex items-start justify-between gap-3 flex-wrap mb-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 mb-0.5">
+                    Pickup photo coverage check
+                    <span className="ml-2 text-[10px] font-medium text-slate-500 uppercase">
+                      optional
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    Turo denies claims when pickup photos don&apos;t cover the
+                    damage area. Audit your coverage against the 8 standard
+                    angles.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={checkCoverage}
+                  disabled={checkingCoverage}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 transition"
+                >
+                  {checkingCoverage ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Auditing photos...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Run coverage check
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {coverage && (
+                <div
+                  className={`rounded-xl border p-4 ${
+                    coverage.coverage_score >= 80
+                      ? "bg-emerald-50 border-emerald-200"
+                      : coverage.coverage_score >= 50
+                        ? "bg-amber-50 border-amber-200"
+                        : "bg-rose-50 border-rose-200"
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-2xl font-bold ${
+                          coverage.coverage_score >= 80
+                            ? "text-emerald-700"
+                            : coverage.coverage_score >= 50
+                              ? "text-amber-700"
+                              : "text-rose-700"
+                        }`}
+                      >
+                        {coverage.coverage_score}
+                      </span>
+                      <span className="text-xs font-medium text-slate-600">
+                        / 100 coverage
+                      </span>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
+                        coverage.coverage_score >= 80
+                          ? "bg-emerald-200 text-emerald-900"
+                          : coverage.coverage_score >= 50
+                            ? "bg-amber-200 text-amber-900"
+                            : "bg-rose-200 text-rose-900"
+                      }`}
+                    >
+                      {coverage.coverage_score >= 80
+                        ? "STRONG"
+                        : coverage.coverage_score >= 50
+                          ? "GAPS"
+                          : "POOR"}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-800 mb-3">
+                    {coverage.summary}
+                  </p>
+                  {coverage.covered_angles.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">
+                        Covered
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {coverage.covered_angles.map((a, i) => (
+                          <span
+                            key={i}
+                            className="text-[11px] bg-white border border-slate-200 text-slate-700 px-2 py-0.5 rounded-full"
+                          >
+                            ✓ {a}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {coverage.missing_angles.length > 0 && (
+                    <div className="mb-2">
+                      <p className="text-[10px] font-bold text-rose-700 uppercase mb-1">
+                        Missing
+                      </p>
+                      <div className="flex flex-wrap gap-1">
+                        {coverage.missing_angles.map((a, i) => (
+                          <span
+                            key={i}
+                            className="text-[11px] bg-rose-100 border border-rose-200 text-rose-800 px-2 py-0.5 rounded-full"
+                          >
+                            ✗ {a}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {coverage.recommendations?.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">
+                        Recommendations
+                      </p>
+                      <ul className="text-xs text-slate-700 list-disc list-inside space-y-0.5">
+                        {coverage.recommendations.map((r, i) => (
+                          <li key={i}>{r}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         <section className="bg-white rounded-2xl border border-slate-200/70 p-6 mb-6 shadow-sm shadow-slate-200/50">
@@ -529,6 +866,61 @@ export default function HomePage() {
             </h2>
             <span className="text-xs text-slate-500">(optional but better)</span>
           </div>
+
+          {/* Turo 24-hour deadline countdown — shows up once a trip end date is entered */}
+          {deadline.isValid && (
+            <div
+              className={`mb-5 rounded-xl border p-3 flex items-start gap-3 ${
+                deadline.severity === "expired"
+                  ? "bg-red-50 border-red-200"
+                  : deadline.severity === "critical"
+                    ? "bg-rose-50 border-rose-200"
+                    : deadline.severity === "urgent"
+                      ? "bg-amber-50 border-amber-200"
+                      : "bg-emerald-50 border-emerald-200"
+              }`}
+            >
+              <div className="flex-shrink-0 mt-0.5">
+                {deadline.severity === "expired" ? (
+                  <AlertCircle className="w-5 h-5 text-red-600" />
+                ) : deadline.severity === "critical" ? (
+                  <AlertCircle className="w-5 h-5 text-rose-600" />
+                ) : deadline.severity === "urgent" ? (
+                  <Clock className="w-5 h-5 text-amber-600" />
+                ) : (
+                  <Clock className="w-5 h-5 text-emerald-600" />
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p
+                  className={`text-sm font-semibold ${
+                    deadline.severity === "expired"
+                      ? "text-red-900"
+                      : deadline.severity === "critical"
+                        ? "text-rose-900"
+                        : deadline.severity === "urgent"
+                          ? "text-amber-900"
+                          : "text-emerald-900"
+                  }`}
+                >
+                  {deadline.label}
+                </p>
+                <p
+                  className={`text-xs mt-0.5 ${
+                    deadline.severity === "expired"
+                      ? "text-red-800"
+                      : deadline.severity === "critical"
+                        ? "text-rose-800"
+                        : deadline.severity === "urgent"
+                          ? "text-amber-800"
+                          : "text-emerald-800"
+                  }`}
+                >
+                  {deadline.subLabel}
+                </p>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="block">
               <span className="text-xs font-medium text-slate-700 mb-1 block">
@@ -813,6 +1205,57 @@ export default function HomePage() {
                   })}
                 </div>
 
+                {/* Dispute mode toggle — Direct with Guest (Stage 1) vs Turo Claim (Stage 2) */}
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-slate-700 uppercase mb-2">
+                    Who is this message for?
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDisputeMode("guest_direct")}
+                      className={`text-left rounded-xl border-2 p-3 transition ${
+                        disputeMode === "guest_direct"
+                          ? "border-indigo-500 bg-indigo-50 shadow-sm"
+                          : "border-slate-200 hover:border-slate-300 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-semibold text-slate-900">
+                          Resolve with guest
+                        </span>
+                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-1.5 py-0.5 rounded">
+                          STAGE 1
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        Friendly first message. 20-day window. No Turo fees.
+                      </p>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDisputeMode("turo_claim")}
+                      className={`text-left rounded-xl border-2 p-3 transition ${
+                        disputeMode === "turo_claim"
+                          ? "border-indigo-500 bg-indigo-50 shadow-sm"
+                          : "border-slate-200 hover:border-slate-300 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-sm font-semibold text-slate-900">
+                          Escalate to Turo claims
+                        </span>
+                        <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded">
+                          STAGE 2
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600">
+                        Formal dispute. Use when guest refuses to pay.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
                 <button
                   type="button"
                   onClick={generateDispute}
@@ -822,12 +1265,16 @@ export default function HomePage() {
                   {stage === "drafting" ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Drafting dispute message...
+                      Drafting{" "}
+                      {disputeMode === "guest_direct" ? "guest" : "Turo"} message...
                     </>
                   ) : (
                     <>
                       <AlertTriangle className="w-4 h-4" />
-                      Generate Turo dispute message
+                      Generate{" "}
+                      {disputeMode === "guest_direct"
+                        ? "guest message"
+                        : "Turo dispute message"}
                     </>
                   )}
                 </button>
