@@ -230,6 +230,7 @@ export default function HomePage() {
     setError(null);
     setAnalysis(null);
     setDispute(null);
+    setIsSampleCase(false);
     setStage("analyzing");
 
     const payload = {
@@ -306,6 +307,7 @@ export default function HomePage() {
   }
 
   const [generatingPdf, setGeneratingPdf] = useState(false);
+  const [isSampleCase, setIsSampleCase] = useState(false);
 
   async function downloadPdf() {
     if (!dispute || !analysis) return;
@@ -343,6 +345,12 @@ export default function HomePage() {
     setError(null);
     setStage("idle");
     setCopied(false);
+    setIsSampleCase(false);
+    setVehicleLabel("");
+    setRenterName("");
+    setTripStartDate("");
+    setTripEndDate("");
+    setOperatorNotes("");
   }
 
   async function fileFromUrl(url: string): Promise<UploadedPhoto> {
@@ -426,6 +434,13 @@ export default function HomePage() {
       // Pre-bake findings so the demo is fast and reliable
       setAnalysis(SAMPLE_ANALYSIS);
       setStage("analyzed");
+      setIsSampleCase(true);
+      // Scroll to the result section so user sees it immediately
+      setTimeout(() => {
+        document
+          .getElementById("analysis-result")
+          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -559,36 +574,52 @@ export default function HomePage() {
         </section>
 
         <section className="bg-white rounded-2xl border border-slate-200 p-6 mb-6 shadow-sm">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-            <button
-              type="button"
-              onClick={runAnalysis}
-              disabled={!canAnalyze || stage === "analyzing" || stage === "drafting"}
-              className="flex-1 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-lg font-medium disabled:bg-slate-300 disabled:cursor-not-allowed transition"
-            >
-              {stage === "analyzing" ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Comparing photos with Claude vision...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-4 h-4" />
-                  Analyze damage
-                </>
-              )}
-            </button>
-            {(analysis || dispute || error) && (
+          {isSampleCase ? (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="flex-1 inline-flex items-center justify-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-800 px-5 py-3 rounded-lg font-medium text-sm">
+                <CheckCircle2 className="w-4 h-4" />
+                Sample case loaded — analysis ready. Scroll down to see findings.
+              </div>
               <button
                 type="button"
                 onClick={reset}
                 className="px-4 py-3 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-sm"
               >
-                Start over
+                Clear
               </button>
-            )}
-          </div>
-          {!canAnalyze && (
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <button
+                type="button"
+                onClick={runAnalysis}
+                disabled={!canAnalyze || stage === "analyzing" || stage === "drafting"}
+                className="flex-1 inline-flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-lg font-medium disabled:bg-slate-300 disabled:cursor-not-allowed transition"
+              >
+                {stage === "analyzing" ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Comparing photos with Claude vision...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    Analyze damage
+                  </>
+                )}
+              </button>
+              {(analysis || dispute || error) && (
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="px-4 py-3 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium text-sm"
+                >
+                  Start over
+                </button>
+              )}
+            </div>
+          )}
+          {!canAnalyze && !isSampleCase && (
             <p className="text-xs text-slate-500 mt-2">
               Add at least one pickup and one return photo to analyze.
             </p>
@@ -601,7 +632,10 @@ export default function HomePage() {
         </section>
 
         {analysis && (
-          <section className="bg-white rounded-2xl border border-slate-200 p-6 mb-6 shadow-sm">
+          <section
+            id="analysis-result"
+            className="bg-white rounded-2xl border border-slate-200 p-6 mb-6 shadow-sm"
+          >
             <div className="flex items-center gap-2 mb-4">
               <span className="text-xs font-semibold bg-slate-100 text-slate-700 px-2 py-0.5 rounded">
                 RESULT
