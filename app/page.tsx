@@ -345,17 +345,113 @@ export default function HomePage() {
     setCopied(false);
   }
 
+  async function fileFromUrl(url: string): Promise<UploadedPhoto> {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error("read failed"));
+      reader.readAsDataURL(blob);
+    });
+    const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) throw new Error("bad image");
+    return {
+      preview: dataUrl,
+      mediaType: match[1],
+      base64: match[2],
+      name: url.split("/").pop() || "sample.jpg",
+    };
+  }
+
+  const SAMPLE_ANALYSIS: AnalyzeResponse = {
+    new_damage_detected: true,
+    summary:
+      "Two new damage findings: a moderate paint scratch on the lower body panel and a minor dent in the driver-side door area, both clearly visible in return photos and not present in any pickup photo.",
+    total_estimate_low_usd: 450,
+    total_estimate_high_usd: 780,
+    findings: [
+      {
+        id: "d1",
+        location: "Lower body panel, driver side",
+        description:
+          "New diagonal scratch through paint approximately 30cm long, with paint chip mark at the leading edge. Penetrates clear coat and base color. Requires panel refinishing.",
+        severity: "moderate",
+        evidence_photo_index: 0,
+        comparison_pickup_index: 0,
+        bbox: { x: 0.25, y: 0.7, width: 0.4, height: 0.12 },
+        estimated_repair_low_usd: 350,
+        estimated_repair_high_usd: 600,
+      },
+      {
+        id: "d2",
+        location: "Driver side door area",
+        description:
+          "New shallow dent approximately 10cm wide with no paint damage. Consistent with a parking-lot bump or door swing impact. Paintless dent repair likely sufficient.",
+        severity: "minor",
+        evidence_photo_index: 2,
+        comparison_pickup_index: 2,
+        bbox: { x: 0.45, y: 0.4, width: 0.25, height: 0.3 },
+        estimated_repair_low_usd: 100,
+        estimated_repair_high_usd: 180,
+      },
+    ],
+  };
+
+  async function loadSampleCase() {
+    setError(null);
+    setStage("idle");
+    setCopied(false);
+    setDispute(null);
+    try {
+      const pickup = await Promise.all([
+        fileFromUrl("/samples/pickup_1.jpg"),
+        fileFromUrl("/samples/pickup_2.jpg"),
+        fileFromUrl("/samples/pickup_3.jpg"),
+      ]);
+      const ret = await Promise.all([
+        fileFromUrl("/samples/return_1.jpg"),
+        fileFromUrl("/samples/return_2.jpg"),
+        fileFromUrl("/samples/return_3.jpg"),
+      ]);
+      setPickupPhotos(pickup);
+      setReturnPhotos(ret);
+      setVehicleLabel("2021 Honda Civic LX");
+      setRenterName("Sarah K.");
+      setTripStartDate("2026-05-28");
+      setTripEndDate("2026-05-30");
+      setOperatorNotes(
+        "Renter mentioned a minor parking-lot incident during the trip."
+      );
+      // Pre-bake findings so the demo is fast and reliable
+      setAnalysis(SAMPLE_ANALYSIS);
+      setStage("analyzed");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
       <div className="max-w-5xl mx-auto px-4 py-8">
         <div className="mb-8">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-white" />
+          <div className="flex items-center justify-between gap-4 flex-wrap mb-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-white" />
+              </div>
+              <h1 className="text-2xl font-bold text-slate-900">
+                Damage Dispute Pack
+              </h1>
             </div>
-            <h1 className="text-2xl font-bold text-slate-900">
-              Damage Dispute Pack
-            </h1>
+            <button
+              type="button"
+              onClick={loadSampleCase}
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Try with a sample case
+            </button>
           </div>
           <p className="text-slate-600 max-w-2xl">
             Upload pickup and return photos, get an AI-detected damage report and a
