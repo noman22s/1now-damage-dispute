@@ -533,8 +533,14 @@ export default function HomePage() {
       setReturnPhotos(ret);
       setVehicleLabel("2021 Honda Civic LX");
       setRenterName("Sarah K.");
-      setTripStartDate("2026-05-28");
-      setTripEndDate("2026-05-30");
+      // Sample trip ended TODAY so the 24-hour Turo deadline counter shows
+      // a live healthy window (operator is still in the safe reporting period)
+      const today = new Date();
+      const twoDaysAgo = new Date(today);
+      twoDaysAgo.setDate(today.getDate() - 2);
+      const fmt = (d: Date) => d.toISOString().slice(0, 10);
+      setTripStartDate(fmt(twoDaysAgo));
+      setTripEndDate(fmt(today));
       setOperatorNotes(
         "Renter mentioned a minor parking-lot incident during the trip."
       );
